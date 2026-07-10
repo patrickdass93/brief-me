@@ -1,0 +1,16 @@
+# Python cache artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local-only credentials, fleet routing, privacy controls, and review evidence
+.env
+.env.local
+*.pem
+*.key
+*.p12
+*.local.json
+*.private.json
+brief_me_package_targets.json
+brief_me_public_scan_terms.txt
+*.jsonl
