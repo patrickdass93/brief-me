@@ -1,0 +1,12 @@
+{
+  "gpt_contract": {
+    "decision": "PASS",
+    "findings": [],
+    "assumptions": []
+  },
+  "deepseek_operations": {
+    "decision": "PASS",
+    "findings": [],
+    "assumptions": []
+  }
+}

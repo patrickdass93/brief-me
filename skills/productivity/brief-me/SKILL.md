@@ -86,6 +86,33 @@ Do **not** automatically hand off when the next step would:
 
 Those require `ship-me` or explicit approval.
 
+## Mandatory MoE Stage Gate
+
+At the final result of every package stage, create or update **one redacted Google Doc per task** in the configured private Drive folder. The document is the canonical handoff record and must hold separate reports from:
+
+- **GPT-5.6 Sol — contract evaluator:** scope, completeness, approval boundaries, and readiness for the next stage.
+- **DeepSeek V4 Pro — operations evaluator:** evidence quality, feasibility, idempotency, failure paths, rollback, and safety.
+
+Create a `stage-gate/v1` JSON input that validates against `schemas/stage-gate-record.v1.json` and `contracts/stage-contracts.v1.json`. Run:
+
+```bash
+python "${BRIEF_ME_PACKAGE_ROOT:-$HOME/brief-me}/scripts/moe_stage_gate.py" \
+  --stage brief-me \
+  --artifact <redacted-stage-record.json> \
+  --task-title "<task title>"
+```
+
+The private config `~/.hermes/brief_me_stage_reviews.private.json` supplies the Google Drive folder ID and approved model IDs. Never commit it or a raw Drive artifact. The script appends both independent reports, the gate decision, and a canonical machine record to the task Doc.
+
+Gate handling:
+
+- `PASS` from **both** evaluators → hand off to `build-me` when otherwise low risk.
+- `NEEDS_REVISION` → revise this stage and rerun; cap the revision loop at three attempts, then escalate.
+- `NEEDS_APPROVAL` → pause for the user; never infer the decision.
+- `EVALUATOR_ERROR` → pre-flight block. Low-risk drafting/build continuation requires an explicit user decision and a recorded error; shipping is always blocked.
+
+Do not merge, vote on, or rerank the two reports: their independent axes must remain visible.
+
 ## Durable Task Ledger Guardrail
 
 For any Hermes agent task with 3+ steps, repo/file edits, cron/job changes, background processes, deployment, remote-host work, or an explicit “build/fix/verify” request, open a durable ledger entry before starting implementation:

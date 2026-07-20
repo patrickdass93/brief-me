@@ -86,6 +86,12 @@ Do **not** automatically hand off when the next step would:
 
 Those require `ship-me` or explicit approval.
 
+## Mandatory MoE Stage Gate
+
+At the final result of every package stage, create or update **one redacted Google Doc per task** in the configured private Drive folder. The document is the canonical handoff record and must hold separate reports from **GPT-5.6 Sol** (contract, scope, approval boundaries, next-stage readiness) and **DeepSeek V4 Pro** (operational evidence, feasibility, idempotency, rollback, and safety).
+
+Create a `stage-gate/v1` JSON input validated by `schemas/stage-gate-record.v1.json` and `contracts/stage-contracts.v1.json`, then run `python "${BRIEF_ME_PACKAGE_ROOT:-$HOME/brief-me}/scripts/moe_stage_gate.py" --stage brief-me --artifact <redacted-record.json> --task-title "<task title>"`. Both models must return `PASS` before handoff. `NEEDS_REVISION` loops back (maximum three attempts), `NEEDS_APPROVAL` pauses for the user, and `EVALUATOR_ERROR` blocks until explicitly resolved; shipping is always blocked. Keep the two reports separate and never commit Drive IDs, task documents, or unredacted evidence.
+
 ## Durable Task Ledger Guardrail
 
 For any Hermes agent task with 3+ steps, repo/file edits, cron/job changes, background processes, deployment, remote-host work, or an explicit “build/fix/verify” request, open a durable ledger entry before starting implementation:

@@ -1,0 +1,13 @@
+{
+  "drive_folder_id": "REPLACE_WITH_PRIVATE_GOOGLE_DRIVE_FOLDER_ID",
+  "evaluators": {
+    "gpt_contract": {
+      "provider": "openai-codex",
+      "model": "gpt-5.6-sol"
+    },
+    "deepseek_operations": {
+      "provider": "custom",
+      "model": "deepseek-v4-pro-260425"
+    }
+  }
+}

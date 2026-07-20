@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/brief-me/stage-gate-record.v1.json",
+  "title": "Brief-Me Stage Gate Record v1",
+  "type": "object",
+  "required": ["schema_version", "task_id", "stage", "stage_contract", "artifact", "stage_data"],
+  "properties": {
+    "schema_version": {"const": "stage-gate/v1"},
+    "task_id": {"type": "string", "minLength": 1},
+    "stage": {"enum": ["brief-me", "build-me", "ship-me", "maintain-me"]},
+    "stage_contract": {
+      "type": "object",
+      "required": ["objective", "required_evidence", "required_approvals", "acceptance_criteria", "next_stage"],
+      "properties": {
+        "objective": {"type": "string", "minLength": 1},
+        "required_evidence": {"type": "array", "items": {"type": "string"}},
+        "required_approvals": {"type": "array", "items": {"type": "string"}},
+        "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "next_stage": {"type": ["string", "null"]}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["summary", "evidence", "redactions_applied"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "items": {"type": "object"}},
+        "redactions_applied": {"type": "boolean"}
+      }
+    },
+    "stage_data": {"type": "object"},
+    "evaluations": {"type": "object"},
+    "gate_decision": {"type": "object"}
+  },
+  "additionalProperties": true
+}

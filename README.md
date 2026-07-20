@@ -58,6 +58,23 @@ Low-risk actions can proceed automatically:
 
 Approval is required for public exposure, real recipients outside approved destinations, destructive changes, broad production data mutation, secrets movement/storage, DNS/tunnel changes, or critical restarts.
 
+## Mandatory MoE stage gates
+
+Every final stage result is evaluated in parallel by **GPT-5.6 Sol** (contract, scope, approval boundaries, next-stage readiness) and **DeepSeek V4 Pro** (operational evidence, feasibility, failure behavior, rollback, safety). The two reports remain separate. A stage advances only when both return `PASS`; revision, approval, and evaluator-error outcomes use explicit gates rather than a blended score.
+
+Each workflow task has one private Google Doc as its canonical redacted record. Configure its Drive folder and evaluator settings outside the repository in `~/.hermes/brief_me_stage_reviews.private.json`; start from `brief_me_stage_reviews.private.json.example`. The generic implementation, schemas, prompt contracts, and test fixtures are public-safe:
+
+```text
+schemas/stage-gate-record.v1.json
+contracts/stage-contracts.v1.json
+prompts/
+scripts/moe_stage_gate.py
+scripts/google_doc_stage_record.py
+tests/
+```
+
+Use `scripts/moe_stage_gate.py --help` for invocation details. The script validates the record locally, runs both evaluator calls in parallel, then appends the independent reports and canonical machine record to the task Doc. The runtime is invoked from the package checkout by default (`$HOME/brief-me`); set `BRIEF_ME_PACKAGE_ROOT` when the checkout is elsewhere. Never commit Drive IDs, task docs, raw evaluator prompts, or unredacted evidence.
+
 ## Public-release privacy gate
 
 This repository is designed to be publicly shareable. Never commit local fleet target files, session evidence, credentials, personal/work details, hostnames, IP addresses, or direct identifiers.

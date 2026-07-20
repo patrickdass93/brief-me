@@ -138,6 +138,19 @@ Immediately verify the shipped state:
 
 After shipping, decide whether `maintain-me` should create monitoring/watchdogs, backup checks, or periodic health summaries.
 
+## Mandatory MoE Stage Gate
+
+After post-ship verification and before declaring the release complete, write a redacted `stage-gate/v1` record to the task’s canonical Google Doc:
+
+```bash
+python "${BRIEF_ME_PACKAGE_ROOT:-$HOME/brief-me}/scripts/moe_stage_gate.py" \
+  --stage ship-me \
+  --artifact <redacted-ship-record.json> \
+  --doc-id <task-google-doc-id>
+```
+
+Both **GPT-5.6 Sol** (contract/approval readiness) and **DeepSeek V4 Pro** (operational proof, rollback, and safety) must independently return `PASS`. Their reports remain separate. Any `NEEDS_REVISION` returns to the smallest safe ship verification step; `NEEDS_APPROVAL` pauses; any `EVALUATOR_ERROR` is an **abort gate** that blocks shipping. This gate does not substitute for an explicit approval requirement.
+
 ## Ship Report Format
 
 ```markdown

@@ -168,6 +168,19 @@ For any ledger-backed task, do not report “done” until all acceptance checks
 
 If the blocker fails, report the pending checks instead of claiming completion. Leave unsafe/approval-gated actions blocked in the ledger so the hourly watchdog alerts rather than auto-resumes.
 
+## Mandatory MoE Stage Gate
+
+Before handing a completed build to `ship-me`, create a redacted `stage-gate/v1` record with the build contract, changed resources, verification evidence, side effects, unresolved risks, and rollback. Reuse the task’s Google Doc ID from the brief/ledger:
+
+```bash
+python "${BRIEF_ME_PACKAGE_ROOT:-$HOME/brief-me}/scripts/moe_stage_gate.py" \
+  --stage build-me \
+  --artifact <redacted-build-record.json> \
+  --doc-id <task-google-doc-id>
+```
+
+The gate calls **GPT-5.6 Sol** and **DeepSeek V4 Pro** in parallel and appends their separate reports to the canonical task Doc. `PASS` from both is required before `ship-me`. `NEEDS_REVISION` loops back to the smallest failing build slice (maximum three cycles); `NEEDS_APPROVAL` pauses for the user; evaluator error blocks the handoff until explicitly resolved. Never place secrets, raw credentials, or unredacted diagnostics in the record.
+
 ## n8n Build Pattern
 
 1. Back up existing workflow JSON before modifying it.

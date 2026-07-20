@@ -147,6 +147,19 @@ Every auto-resume attempt must be recorded:
 
 After recovery, update each acceptance check and run the final blocker before claiming completion.
 
+## Mandatory MoE Stage Gate
+
+Before closing a maintenance setup or handing it to ongoing operations, append a redacted `stage-gate/v1` maintenance record to the task’s canonical Google Doc:
+
+```bash
+python "${BRIEF_ME_PACKAGE_ROOT:-$HOME/brief-me}/scripts/moe_stage_gate.py" \
+  --stage maintain-me \
+  --artifact <redacted-maintain-record.json> \
+  --doc-id <task-google-doc-id>
+```
+
+GPT-5.6 Sol checks the maintenance contract and escalation boundaries; DeepSeek V4 Pro checks the health evidence, alerting, dedupe, disable path, and bounded auto-fix policy. Both must pass. `NEEDS_REVISION` returns to the health contract/watchdog; `NEEDS_APPROVAL` pauses for the user; evaluator error blocks closure and is recorded in the Doc. Preserve the two reports independently; do not collapse them into a score.
+
 ## Health Contract Template
 
 ```markdown

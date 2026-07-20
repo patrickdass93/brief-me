@@ -1,0 +1,21 @@
+{
+  "schema_version": "stage-contracts/v1",
+  "stages": {
+    "brief-me": {
+      "next_stage": "build-me",
+      "required_stage_data": ["intent", "domain", "first_safe_slice", "approval_gates", "success_criteria", "failure_behavior"]
+    },
+    "build-me": {
+      "next_stage": "ship-me",
+      "required_stage_data": ["changed_resources", "verification_evidence", "side_effects", "unresolved_risks", "rollback"]
+    },
+    "ship-me": {
+      "next_stage": "maintain-me",
+      "required_stage_data": ["approval_status", "pre_ship_checks", "backup_or_rollback", "post_ship_verification", "maintain_handoff"]
+    },
+    "maintain-me": {
+      "next_stage": null,
+      "required_stage_data": ["health_contract", "check_frequency", "alert_destination", "dedupe_policy", "auto_fix_bounds", "disable_path"]
+    }
+  }
+}

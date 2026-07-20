@@ -1,0 +1,35 @@
+{
+  "schema_version": "stage-gate/v1",
+  "task_id": "example-stage-gate-task",
+  "stage": "build-me",
+  "stage_contract": {
+    "objective": "Create a testable MoE stage-gate engine and Google Docs task-record adapter without changing active package behavior.",
+    "required_evidence": ["deterministic tests pass", "Google Doc read-back succeeds"],
+    "required_approvals": ["future activation of mandatory package gates"],
+    "acceptance_criteria": ["schemas, prompts, engine, adapter, and fixtures exist", "two independent evaluator reports are captured", "no private Drive identifiers are committed"],
+    "next_stage": "ship-me"
+  },
+  "artifact": {
+    "summary": "A public-safe Python MoE stage-gate engine, a Google Docs adapter, versioned schemas/contracts/prompts, deterministic tests, and a private local configuration boundary were created.",
+    "evidence": [
+      {"id": "unit-tests", "kind": "command", "reference": "python -m unittest discover -s tests -p test_*.py -v"},
+      {"id": "doc-readback", "kind": "Google Doc", "reference": "MoE Stage Evaluation — brief-me Package"}
+    ],
+    "redactions_applied": true
+  },
+  "stage_data": {
+    "changed_resources": [
+      "schemas/stage-gate-record.v1.json",
+      "contracts/stage-contracts.v1.json",
+      "prompts/gpt-5.6-sol-contract.v1.md",
+      "prompts/deepseek-v4-pro-operations.v1.md",
+      "scripts/moe_stage_gate.py",
+      "scripts/google_doc_stage_record.py",
+      "tests/test_moe_stage_gate.py"
+    ],
+    "verification_evidence": ["deterministic unit test suite"],
+    "side_effects": ["private Google Drive folder and task document only"],
+    "unresolved_risks": ["live model output and package skill integration remain to be verified"],
+    "rollback": "Revert the implementation commit and remove the private local configuration; no active workflow was changed."
+  }
+}
