@@ -24,7 +24,20 @@
       "required": ["summary", "evidence", "redactions_applied"],
       "properties": {
         "summary": {"type": "string", "minLength": 1},
-        "evidence": {"type": "array", "items": {"type": "object"}},
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "reference"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "kind": {"type": "string", "minLength": 1},
+              "reference": {"type": "string", "minLength": 1},
+              "observed": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        },
         "redactions_applied": {"type": "boolean"}
       }
     },

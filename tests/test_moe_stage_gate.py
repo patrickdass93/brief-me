@@ -80,6 +80,12 @@ class StageGateTests(unittest.TestCase):
         errors = stage_gate.validate_record(bad)
         self.assertTrue(any("rollback" in error for error in errors), errors)
 
+    def test_schema_is_enforced_for_nested_evidence(self) -> None:
+        bad = record()
+        del bad["artifact"]["evidence"][0]["id"]
+        errors = stage_gate.validate_record(bad)
+        self.assertTrue(any(error.startswith("schema:artifact.evidence.0") for error in errors), errors)
+
     def test_aggregate_requires_both_passes(self) -> None:
         reports = [
             {"evaluator_id": "gpt_contract", "decision": "PASS", "findings": []},
@@ -150,6 +156,15 @@ class StageGateTests(unittest.TestCase):
         self.assertIn('"task_id": "test-task-001"', appendix)
         self.assertTrue(stage_gate.document_has_evaluation_digest(appendix, evaluated["evaluation_digest"]))
         self.assertFalse(stage_gate.document_has_evaluation_digest(appendix, "other"))
+
+    def test_document_digest_requires_complete_parseable_marker_block(self) -> None:
+        digest = "expected-digest"
+        self.assertFalse(stage_gate.document_has_evaluation_digest(f'ordinary evidence: {{"evaluation_digest": "{digest}"}}', digest))
+        self.assertFalse(stage_gate.document_has_evaluation_digest(
+            f'@@BRIEF_ME_STAGE_GATE_V1@@\n{{"evaluation_digest": "{digest}"\n@@END_BRIEF_ME_STAGE_GATE_V1@@', digest
+        ))
+        valid = f'@@BRIEF_ME_STAGE_GATE_V1@@\n{{"evaluation_digest": "{digest}"}}\n@@END_BRIEF_ME_STAGE_GATE_V1@@'
+        self.assertTrue(stage_gate.document_has_evaluation_digest(valid, digest))
 
     def test_mock_results_are_loaded_and_validated(self) -> None:
         mock = {

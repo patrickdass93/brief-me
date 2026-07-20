@@ -11,12 +11,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+
+import jsonschema
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -32,6 +35,11 @@ from google_doc_stage_record import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS_PATH = ROOT / "contracts" / "stage-contracts.v1.json"
+SCHEMA_PATH = ROOT / "schemas" / "stage-gate-record.v1.json"
+MARKER_PATTERN = re.compile(
+    r"@@BRIEF_ME_STAGE_GATE_V1@@\s*\n(?P<record>.*?)\n@@END_BRIEF_ME_STAGE_GATE_V1@@",
+    re.DOTALL,
+)
 TEMPLATE_PATH = ROOT / "templates" / "task-review-template.md"
 PROMPTS = {
     "gpt_contract": ROOT / "prompts" / "gpt-5.6-sol-contract.v1.md",
@@ -61,8 +69,12 @@ def _required_text(value: Any, label: str, errors: list[str]) -> None:
 
 
 def validate_record(record: dict[str, Any]) -> list[str]:
-    """Return all deterministic validation errors without calling a model."""
+    """Return schema and stage-contract validation errors without calling a model."""
     errors: list[str] = []
+    validator = jsonschema.Draft202012Validator(load_json(SCHEMA_PATH))
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.absolute_path)):
+        location = ".".join(str(part) for part in error.absolute_path) or "record"
+        errors.append(f"schema:{location}: {error.message}")
     if record.get("schema_version") != "stage-gate/v1":
         errors.append("schema_version must equal stage-gate/v1")
     _required_text(record.get("task_id"), "task_id", errors)
@@ -234,9 +246,22 @@ def evaluation_digest(record: dict[str, Any]) -> str:
     return input_digest(stable)
 
 
+def parsed_document_stage_records(document_text: str) -> list[dict[str, Any]]:
+    """Parse only complete, marker-delimited stage-gate records from a Doc."""
+    records: list[dict[str, Any]] = []
+    for match in MARKER_PATTERN.finditer(document_text):
+        try:
+            candidate = json.loads(match.group("record"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            records.append(candidate)
+    return records
+
+
 def document_has_evaluation_digest(document_text: str, digest: str) -> bool:
-    """Return true when this exact input-and-evaluation result already has a Doc record."""
-    return f'"evaluation_digest": "{digest}"' in document_text
+    """Return true only for a parsed canonical record with this exact result digest."""
+    return any(record.get("evaluation_digest") == digest for record in parsed_document_stage_records(document_text))
 
 
 def render_doc_appendix(record: dict[str, Any]) -> str:

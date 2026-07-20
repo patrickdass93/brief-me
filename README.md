@@ -73,6 +73,8 @@ scripts/google_doc_stage_record.py
 tests/
 ```
 
+The gate runtime requires Python 3, [`jsonschema`](requirements.txt), the configured `hermes` CLI providers, and `gog` for Google Docs. Install the public Python dependency with `python -m pip install -r requirements.txt` before using the gate CLI on a new host.
+
 Use `scripts/moe_stage_gate.py --help` for invocation details. The script validates the record locally, runs both evaluator calls in parallel, then appends the independent reports and canonical machine record to the task Doc. The runtime is invoked from the package checkout by default (`$HOME/brief-me`); set `BRIEF_ME_PACKAGE_ROOT` when the checkout is elsewhere. Never commit Drive IDs, task docs, raw evaluator prompts, or unredacted evidence.
 
 ## Public-release privacy gate
