@@ -1,5 +1,6 @@
 {
   "drive_folder_id": "REPLACE_WITH_PRIVATE_GOOGLE_DRIVE_FOLDER_ID",
+  "google_cli": "auto",
   "evaluators": {
     "gpt_contract": {
       "provider": "openai-codex",

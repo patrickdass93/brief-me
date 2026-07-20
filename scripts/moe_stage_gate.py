@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -302,6 +303,24 @@ def merged_evaluators(config_path: Path | None) -> tuple[dict[str, str], dict[st
     return config, evaluators
 
 
+def apply_google_cli_config(config: dict[str, Any]) -> str:
+    """Apply the private per-runtime Google CLI choice for this gate invocation.
+
+    Hosts can have both CLIs installed while only one is authenticated.  The
+    adapter already honours ``BRIEF_ME_GOOGLE_CLI``; this maps the private
+    runtime config to that existing interface without storing credentials in
+    the package or changing the host-wide default.
+    """
+    backend = str(config.get("google_cli", "auto")).lower()
+    if backend not in {"auto", "gog", "gws"}:
+        raise ValueError("google_cli must be one of auto, gog, or gws")
+    if backend == "auto":
+        os.environ.pop("BRIEF_ME_GOOGLE_CLI", None)
+    else:
+        os.environ["BRIEF_ME_GOOGLE_CLI"] = backend
+    return backend
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", required=True, choices=sorted(load_contracts()))
@@ -323,6 +342,7 @@ def main() -> int:
             print(json.dumps({"decision": "NEEDS_REVISION", "validation_errors": errors}, indent=2))
             return 2
         config, evaluators = merged_evaluators(args.config)
+        apply_google_cli_config(config)
         if args.dry_run and not args.mock_results:
             print(json.dumps({"decision": "DRY_RUN", "would_call": evaluators, "input_digest": input_digest(record)}, indent=2))
             return 0

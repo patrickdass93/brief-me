@@ -177,6 +177,15 @@ class StageGateTests(unittest.TestCase):
             reports = stage_gate.load_mock_reports(path)
         self.assertEqual([item["evaluator_id"] for item in reports], ["gpt_contract", "deepseek_operations"])
 
+    def test_private_config_can_select_google_cli(self) -> None:
+        with patch.dict(stage_gate.os.environ, {"BRIEF_ME_GOOGLE_CLI": "gog"}):
+            self.assertEqual(stage_gate.apply_google_cli_config({"google_cli": "gws"}), "gws")
+            self.assertEqual(stage_gate.os.environ["BRIEF_ME_GOOGLE_CLI"], "gws")
+            self.assertEqual(stage_gate.apply_google_cli_config({"google_cli": "auto"}), "auto")
+            self.assertNotIn("BRIEF_ME_GOOGLE_CLI", stage_gate.os.environ)
+        with self.assertRaisesRegex(ValueError, "google_cli"):
+            stage_gate.apply_google_cli_config({"google_cli": "unsupported"})
+
 
 if __name__ == "__main__":
     unittest.main()
