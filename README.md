@@ -77,6 +77,26 @@ The gate runtime requires Python 3, [`jsonschema`](requirements.txt), and config
 
 Use `scripts/moe_stage_gate.py --help` for invocation details. The script validates the record locally, runs both evaluator calls in parallel, then appends the independent reports and canonical machine record to the task Doc. The runtime is invoked from the package checkout by default (`$HOME/brief-me`); set `BRIEF_ME_PACKAGE_ROOT` when the checkout is elsewhere. Never commit Drive IDs, task docs, raw evaluator prompts, or unredacted evidence.
 
+## Local inactive Task Runtime proof
+
+`scripts/task_runtime.py` is a standard-library-only, local proof of the durable execution contract. It does **not** invoke Hermes tools, models, networks, crons, messaging, or remote agents. It stores synthetic task state and append-only transition events in SQLite, prevents duplicate triggers using `(agent_id, idempotency_key)`, supports approval waits, records parent-child task lineage, and can import a legacy JSON ledger without changing the source file.
+
+Run the zero-side-effect demonstration:
+
+```bash
+python3 scripts/task_runtime.py dry-run --agent local-test
+```
+
+Expected output is JSON with duplicate suppression, a blocked consequential action before approval, an allowed action after approval, a completed synthetic task, and `"external_side_effects": []`.
+
+Run its deterministic tests:
+
+```bash
+python3 tests/test_task_runtime.py
+```
+
+This is a build-stage proof only. Remote installation, active watchdog/cron enablement, real ledger migration, and external effects remain `ship-me` approval-gated.
+
 ## Public-release privacy gate
 
 This repository is designed to be publicly shareable. Never commit local fleet target files, session evidence, credentials, personal/work details, hostnames, IP addresses, or direct identifiers.
