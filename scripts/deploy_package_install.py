@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Deploy the brief-me skill package plus its local Task Runtime to configured targets.
+"""Install the brief-me package and Task Runtime with backup-aware rollback.
 
-The tool is generic and public-safe: target routes live only in a private JSON
-configuration outside the repository. `--dry-run` never writes a target.
+Targets are supplied only through a private JSON config outside this repository.
+`--dry-run` reports the planned operation and never writes a target. This tool does
+not activate a runtime, create a schedule, or send external actions.
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import io
 import json
 import shutil
@@ -20,6 +23,21 @@ from typing import Any
 SKILLS = ["brief-me", "build-me", "ship-me", "maintain-me"]
 RUNTIME_ARCHIVE_PATH = "runtime/task_runtime.py"
 RUNTIME_INSTALL_DIR = Path("runtime") / "task-runtime"
+
+
+class DeploymentError(RuntimeError):
+    """A failed deployment that includes the exact rollback evidence paths."""
+
+    def __init__(self, message: str, result: dict[str, Any]):
+        super().__init__(message)
+        self.result = result
+
+
+def sha256(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def load_targets(config_path: str) -> list[dict[str, Any]]:
@@ -57,12 +75,32 @@ def archive_bytes(source: Path, runtime: Path | None = None) -> bytes:
     return stream.getvalue()
 
 
-def backup_name(prefix: str) -> str:
-    return f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}"
+def backup_name(prefix: str, stamp: str | None = None) -> str:
+    return f"{prefix}-{stamp or time.strftime('%Y%m%d-%H%M%S')}"
 
 
 def expand_local(path_text: str) -> Path:
     return Path(path_text).expanduser()
+
+
+def preinstall_manifest(root: Path) -> dict[str, Any]:
+    skills = {name: sha256(root / "skills" / "productivity" / name / "SKILL.md") for name in SKILLS}
+    runtime = sha256(root / RUNTIME_INSTALL_DIR / "task_runtime.py")
+    return {"skills": skills, "runtime": runtime}
+
+
+def restore_local(skills_destination: Path, runtime_destination: Path, skills_backup: Path, runtime_backup: Path) -> None:
+    """Restore exactly the skill/runtime paths touched by one local invocation."""
+    for name in SKILLS:
+        destination = skills_destination / name
+        shutil.rmtree(destination, ignore_errors=True)
+        previous = skills_backup / name
+        if previous.exists():
+            shutil.copytree(previous, destination, symlinks=True)
+    shutil.rmtree(runtime_destination, ignore_errors=True)
+    previous_runtime = runtime_backup / "task-runtime"
+    if previous_runtime.exists():
+        shutil.copytree(previous_runtime, runtime_destination, symlinks=True)
 
 
 def deploy_local(target: dict[str, Any], source: Path, runtime: Path, dry_run: bool) -> dict[str, Any]:
@@ -70,26 +108,45 @@ def deploy_local(target: dict[str, Any], source: Path, runtime: Path, dry_run: b
     root = expand_local(str(target.get("profile_root", "~/.hermes")))
     skills_destination = root / "skills" / "productivity"
     runtime_destination = root / RUNTIME_INSTALL_DIR
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    skills_backup = root / "backups" / backup_name("brief-me-package", stamp)
+    runtime_backup = root / "backups" / backup_name("brief-me-runtime", stamp)
+    manifest = preinstall_manifest(root)
+    result: dict[str, Any] = {
+        "agent": agent,
+        "skills_backup": str(skills_backup),
+        "runtime_backup": str(runtime_backup),
+        "preinstall_manifest": manifest,
+        "skills_installed": len(SKILLS),
+        "runtime_installed": True,
+    }
     if dry_run:
-        return {"agent": agent, "ok": True, "dry_run": True, "skills_installed": len(SKILLS), "runtime_installed": True}
-
-    skills_backup = root / "backups" / backup_name("brief-me-package")
-    runtime_backup = root / "backups" / backup_name("brief-me-runtime")
-    skills_destination.mkdir(parents=True, exist_ok=True)
-    skills_backup.mkdir(parents=True, exist_ok=False)
-    runtime_backup.mkdir(parents=True, exist_ok=False)
-    for name in SKILLS:
-        existing = skills_destination / name
-        if existing.exists():
-            shutil.copytree(existing, skills_backup / name, symlinks=True)
-        shutil.rmtree(existing, ignore_errors=True)
-        shutil.copytree(source / name, existing, symlinks=True)
-    if runtime_destination.exists():
-        shutil.copytree(runtime_destination, runtime_backup / "task-runtime", symlinks=True)
-    shutil.rmtree(runtime_destination, ignore_errors=True)
-    runtime_destination.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(runtime, runtime_destination / "task_runtime.py")
-    return {"agent": agent, "ok": True, "skills_installed": len(SKILLS), "runtime_installed": True, "backup_created": True}
+        return {**result, "ok": True, "dry_run": True}
+    try:
+        skills_destination.mkdir(parents=True, exist_ok=True)
+        skills_backup.mkdir(parents=True, exist_ok=False)
+        runtime_backup.mkdir(parents=True, exist_ok=False)
+        for name in SKILLS:
+            existing = skills_destination / name
+            if existing.exists():
+                shutil.copytree(existing, skills_backup / name, symlinks=True)
+        if runtime_destination.exists():
+            shutil.copytree(runtime_destination, runtime_backup / "task-runtime", symlinks=True)
+        for name in SKILLS:
+            existing = skills_destination / name
+            shutil.rmtree(existing, ignore_errors=True)
+            shutil.copytree(source / name, existing, symlinks=True)
+        shutil.rmtree(runtime_destination, ignore_errors=True)
+        runtime_destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(runtime, runtime_destination / "task_runtime.py")
+        return {**result, "ok": True, "backup_created": True, "rolled_back": False}
+    except Exception as exc:
+        try:
+            restore_local(skills_destination, runtime_destination, skills_backup, runtime_backup)
+            rolled_back = True
+        except Exception as restore_exc:
+            raise DeploymentError(f"deployment failed and rollback failed: {type(exc).__name__}: {exc}; {type(restore_exc).__name__}: {restore_exc}", {**result, "ok": False, "rolled_back": False}) from restore_exc
+        raise DeploymentError(f"deployment failed and prior state was restored: {type(exc).__name__}: {exc}", {**result, "ok": False, "rolled_back": rolled_back}) from exc
 
 
 def remote_root_expr(profile_root: str) -> str:
@@ -100,24 +157,44 @@ def remote_root_expr(profile_root: str) -> str:
     return profile_root
 
 
+def _remote_manifest_program() -> str:
+    code = """import hashlib,json,sys
+from pathlib import Path
+root,output=sys.argv[1:]
+root=Path(root)
+skills=['brief-me','build-me','ship-me','maintain-me']
+def digest(path):
+ try:return hashlib.sha256(path.read_bytes()).hexdigest()
+ except OSError:return None
+payload={'skills':{name:digest(root/'skills'/'productivity'/name/'SKILL.md') for name in skills},'runtime':digest(root/'runtime'/'task-runtime'/'task_runtime.py')}
+Path(output).write_text(json.dumps(payload,sort_keys=True)+'\\n')
+"""
+    encoded = base64.b64encode(code.encode()).decode()
+    return f"python3 -c \"import base64;exec(base64.b64decode('{encoded}'))\""
+
+
 def remote_install_command(profile_root: str, stamp: str) -> str:
     root = remote_root_expr(profile_root)
     skills = " ".join(SKILLS)
+    manifest_program = _remote_manifest_program()
     return (
-        f'set -eu; ROOT="{root}"; DEST="$ROOT/skills/productivity"; RUNTIME_DEST="$ROOT/{RUNTIME_INSTALL_DIR}"; '
+        f'set -u; ROOT="{root}"; DEST="$ROOT/skills/productivity"; RUNTIME_DEST="$ROOT/{RUNTIME_INSTALL_DIR}"; '
         f'SKILLS_BACKUP="$ROOT/backups/brief-me-package-{stamp}"; RUNTIME_BACKUP="$ROOT/backups/brief-me-runtime-{stamp}"; '
-        f'STAGE="$ROOT/.brief-me-package-stage-{stamp}-$$"; '
-        'cleanup() { rm -rf "$STAGE"; }; trap cleanup EXIT; '
-        'mkdir -p "$DEST" "$SKILLS_BACKUP" "$RUNTIME_BACKUP" "$STAGE"; tar -xf - -C "$STAGE"; '
-        'test -f "$STAGE/runtime/task_runtime.py"; '
-        f'for NAME in {skills}; do '
-        'test -f "$STAGE/$NAME/SKILL.md"; '
-        'if test -e "$DEST/$NAME"; then cp -a "$DEST/$NAME" "$SKILLS_BACKUP/$NAME"; fi; '
-        'rm -rf "$DEST/$NAME"; mv "$STAGE/$NAME" "$DEST/$NAME"; '
-        'done; '
-        'if test -e "$RUNTIME_DEST"; then cp -a "$RUNTIME_DEST" "$RUNTIME_BACKUP/task-runtime"; fi; '
-        'rm -rf "$RUNTIME_DEST"; mkdir -p "$RUNTIME_DEST"; cp "$STAGE/runtime/task_runtime.py" "$RUNTIME_DEST/task_runtime.py"; '
-        f'printf "skills_installed=%s runtime_installed=true backup_created=true\\n" "{len(SKILLS)}"'
+        f'MANIFEST="$ROOT/backups/brief-me-preinstall-{stamp}.json"; STAGE="$ROOT/.brief-me-package-stage-{stamp}-$$"; CHANGED=0; '
+        'cleanup() { rm -rf "$STAGE"; }; '
+        'rollback() { rc="$1"; if test "$CHANGED" = 1; then '
+        f'for NAME in {skills}; do rm -rf "$DEST/$NAME" || true; test -e "$SKILLS_BACKUP/$NAME" && cp -a "$SKILLS_BACKUP/$NAME" "$DEST/$NAME" || true; done; '
+        'rm -rf "$RUNTIME_DEST" || true; test -e "$RUNTIME_BACKUP/task-runtime" && cp -a "$RUNTIME_BACKUP/task-runtime" "$RUNTIME_DEST" || true; fi; cleanup; exit "$rc"; }; '
+        'apply() { '
+        'mkdir -p "$DEST" "$SKILLS_BACKUP" "$RUNTIME_BACKUP" "$STAGE" || return 1; '
+        f'{manifest_program} "$ROOT" "$MANIFEST" || return 1; '
+        'tar -xf - -C "$STAGE" || return 1; test -f "$STAGE/runtime/task_runtime.py" || return 1; '
+        f'for NAME in {skills}; do test -f "$STAGE/$NAME/SKILL.md" || return 1; test -e "$DEST/$NAME" && cp -a "$DEST/$NAME" "$SKILLS_BACKUP/$NAME" || true; done; '
+        'test -e "$RUNTIME_DEST" && cp -a "$RUNTIME_DEST" "$RUNTIME_BACKUP/task-runtime" || true; CHANGED=1; '
+        f'for NAME in {skills}; do rm -rf "$DEST/$NAME" || return 1; mv "$STAGE/$NAME" "$DEST/$NAME" || return 1; done; '
+        'rm -rf "$RUNTIME_DEST" || return 1; mkdir -p "$RUNTIME_DEST" || return 1; cp "$STAGE/runtime/task_runtime.py" "$RUNTIME_DEST/task_runtime.py" || return 1; }; '
+        'if ! apply; then rollback 1; fi; cleanup; '
+        'printf "{\\\"skills_backup\\\":\\\"%s\\\",\\\"runtime_backup\\\":\\\"%s\\\",\\\"preinstall_manifest\\\":\\\"%s\\\",\\\"skills_installed\\\":4,\\\"runtime_installed\\\":true,\\\"backup_created\\\":true,\\\"rolled_back\\\":false}\\n" "$SKILLS_BACKUP" "$RUNTIME_BACKUP" "$MANIFEST"'
     )
 
 
@@ -130,8 +207,7 @@ def deploy_ssh(target: dict[str, Any], archive: bytes, timeout: int, dry_run: bo
         return {"agent": agent, "ok": True, "dry_run": True, "skills_installed": len(SKILLS), "runtime_installed": True}
     command = remote_install_command(profile_root, time.strftime("%Y%m%d-%H%M%S"))
     if mode == "wsl":
-        one_line = command.replace("\n", "; ")
-        escaped = one_line.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        escaped = command.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
         remote_command = f'wsl.exe sh -lc "{escaped}"'
     elif mode == "posix":
         remote_command = command
@@ -140,16 +216,15 @@ def deploy_ssh(target: dict[str, Any], archive: bytes, timeout: int, dry_run: bo
     ssh_args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
     if target.get("ssh_port"):
         ssh_args.extend(["-p", str(target["ssh_port"])])
-    proc = subprocess.run(
-        ssh_args + [ssh_target, remote_command],
-        input=archive,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-    )
+    proc = subprocess.run(ssh_args + [ssh_target, remote_command], input=archive, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     if proc.returncode != 0:
-        return {"agent": agent, "ok": False, "error": (proc.stderr or proc.stdout).decode(errors="replace")[-400:] or f"ssh exit {proc.returncode}"}
-    return {"agent": agent, "ok": True, "skills_installed": len(SKILLS), "runtime_installed": True, "backup_created": True}
+        return {"agent": agent, "ok": False, "rolled_back": True, "error": (proc.stderr or proc.stdout).decode(errors="replace")[-500:] or f"ssh exit {proc.returncode}"}
+    text = proc.stdout.decode(errors="replace").strip().splitlines()
+    try:
+        payload = json.loads(text[-1])
+    except (IndexError, json.JSONDecodeError):
+        return {"agent": agent, "ok": False, "error": "remote installer returned no parseable rollback evidence"}
+    return {"agent": agent, "ok": True, **payload}
 
 
 def deploy_target(target: dict[str, Any], source: Path, runtime: Path, archive: bytes, timeout: int, dry_run: bool) -> dict[str, Any]:
@@ -160,6 +235,8 @@ def deploy_target(target: dict[str, Any], source: Path, runtime: Path, archive: 
         if kind == "ssh":
             return deploy_ssh(target, archive, timeout, dry_run)
         return {"agent": str(target.get("agent", "unknown")), "ok": False, "error": f"unsupported target type: {kind}"}
+    except DeploymentError as exc:
+        return {"agent": str(target.get("agent", "unknown")), **exc.result, "error": str(exc)}
     except Exception as exc:
         return {"agent": str(target.get("agent", "unknown")), "ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -173,12 +250,10 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    repo = Path(args.repo_root).expanduser()
-    source, runtime = source_root(repo), runtime_source(repo)
+    repo = Path(args.repo_root).expanduser(); source = source_root(repo); runtime = runtime_source(repo)
     targets = load_targets(args.config)
     if args.agent:
-        wanted = set(args.agent)
-        targets = [target for target in targets if str(target.get("agent")) in wanted]
+        wanted = set(args.agent); targets = [target for target in targets if str(target.get("agent")) in wanted]
         if not targets:
             parser.error("no configured targets matched --agent")
     bundle = archive_bytes(source, runtime)

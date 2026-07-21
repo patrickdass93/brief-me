@@ -77,6 +77,31 @@ The gate runtime requires Python 3, [`jsonschema`](requirements.txt), and config
 
 Use `scripts/moe_stage_gate.py --help` for invocation details. The script validates the record locally, runs both evaluator calls in parallel, then appends the independent reports and canonical machine record to the task Doc. The runtime is invoked from the package checkout by default (`$HOME/brief-me`); set `BRIEF_ME_PACKAGE_ROOT` when the checkout is elsewhere. Never commit Drive IDs, task docs, raw evaluator prompts, or unredacted evidence.
 
+## Versioned public release and opt-in source pull
+
+Generic runtime source can be released through a public Git tag only after the public-release preflight passes. The public repository contains code and a hash manifest only—never target routes, private configs, runtime state, task artifacts, credentials, or agent data.
+
+A target may **opt in** to fetch a pinned tag into a versioned local source checkout. This command does not install a runtime, create a database, or activate anything:
+
+```bash
+python3 scripts/pull_package_release.py \
+  --repo-url https://github.com/OWNER/REPOSITORY.git \
+  --ref vX.Y.Z \
+  --expected-commit <immutable-commit-sha> \
+  --checkout ~/.hermes/packages/brief-me/vX.Y.Z \
+  --json
+```
+
+Before public push/tag creation, run the fail-closed scan using a local external deny-term file:
+
+```bash
+python3 scripts/public_release_preflight.py \
+  --repo-root . \
+  --deny-terms-file ~/.hermes/brief_me_public_scan_terms.txt
+```
+
+The pull command verifies the tag commit and `release-manifest.json` before retaining the source checkout. A separate, explicitly approved installer command is still required to put any runtime into a profile root.
+
 ## Runtime bundle and read-only fleet audit
 
 The same repository can stage the runtime alongside the four-skill package, while keeping target routes in a private config outside the repository. This is **not** an activation command:

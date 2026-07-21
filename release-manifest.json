@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "version": "v0.1.0",
+  "files": {
+    "README.md": "1b498c7caad96bf30dc2cc5e8879e2c3c4fc32d51b5afa810a530cdbed990390",
+    "scripts/task_runtime.py": "28870505874e1b5bef41d01473a010a3362736ae8a4b4992e66a9f64715d8b94",
+    "scripts/deploy_package_install.py": "873faee2b2d3f76651e145c0df15b0f8c70cb5cca1e10dd16839dc36dbbe7bc3",
+    "scripts/verify_package_install.py": "a5f4e88c2ea1f7aaf8bc6e9ca5198a0aae69d9ed98498828db13ca829a8f6fef",
+    "scripts/audit_runtime_readiness.py": "d6f5fe5a1f557f000b3852d969e3e14fb3c60c0bfa75cdc0b79438c7366b506c",
+    "scripts/pull_package_release.py": "f42e112e114d49737c2ea0e539ed012239feb86716ad3a184f72a8eee9beeb34",
+    "scripts/public_release_preflight.py": "bd29abd9a732eabda359dc3f415674bd14149ad8322f7f952a3bf83a020ef598",
+    "skills/productivity/brief-me/SKILL.md": "dc18c7a57422c1a5db222b3d823cdd868f6bd97e03bf6dd0277cc453d3d039c7",
+    "skills/productivity/build-me/SKILL.md": "79da3ff39fb53b4c993f5044a8ab3f866f0d3354038296edc05b4f95953c76a2",
+    "skills/productivity/ship-me/SKILL.md": "c40ed28ebc299b1264b3dcb21e0d5adbec8309605e8733b7d8e5d4ae1979b8de",
+    "skills/productivity/maintain-me/SKILL.md": "88240928f4cf2d6239d0e44e943ba0bf3aec0ebdf91a92a403a234d84aa8eea2"
+  }
+}
