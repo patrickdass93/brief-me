@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ spec = importlib.util.spec_from_file_location("moe_stage_gate", MODULE_PATH)
 assert spec and spec.loader
 stage_gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stage_gate)
+adapter = sys.modules["google_doc_stage_record"]
 
 
 def record(stage: str = "brief-me") -> dict:
@@ -181,10 +183,49 @@ class StageGateTests(unittest.TestCase):
         with patch.dict(stage_gate.os.environ, {"BRIEF_ME_GOOGLE_CLI": "gog"}):
             self.assertEqual(stage_gate.apply_google_cli_config({"google_cli": "gws"}), "gws")
             self.assertEqual(stage_gate.os.environ["BRIEF_ME_GOOGLE_CLI"], "gws")
+            self.assertEqual(stage_gate.apply_google_cli_config({"google_cli": "hermes-api"}), "hermes-api")
+            self.assertEqual(stage_gate.os.environ["BRIEF_ME_GOOGLE_CLI"], "hermes-api")
             self.assertEqual(stage_gate.apply_google_cli_config({"google_cli": "auto"}), "auto")
             self.assertNotIn("BRIEF_ME_GOOGLE_CLI", stage_gate.os.environ)
         with self.assertRaisesRegex(ValueError, "google_cli"):
             stage_gate.apply_google_cli_config({"google_cli": "unsupported"})
+
+    def test_hermes_api_backend_creates_appends_and_reads_without_cli_credentials(self) -> None:
+        class Request:
+            def __init__(self, value): self.value = value
+            def execute(self): return self.value
+
+        class Files:
+            def __init__(self): self.created = None
+            def create(self, **kwargs):
+                self.created = kwargs
+                return Request({"id": "doc-1"})
+
+        class Drive:
+            def __init__(self): self.files_api = Files()
+            def files(self): return self.files_api
+
+        class Documents:
+            def __init__(self): self.text = ""
+            def batchUpdate(self, *, documentId, body):
+                self.text += body["requests"][0]["insertText"]["text"]
+                return Request({})
+            def get(self, *, documentId):
+                return Request({"body": {"content": [{"endIndex": len(self.text) + 1, "paragraph": {"elements": [{"textRun": {"content": self.text}}]}}]}})
+
+        class Docs:
+            def __init__(self): self.documents_api = Documents()
+            def documents(self): return self.documents_api
+
+        drive, docs = Drive(), Docs()
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(adapter.os.environ, {"BRIEF_ME_GOOGLE_CLI": "hermes-api"}), patch.object(adapter, "_hermes_api_services", return_value=(drive, docs)):
+            template = Path(tmp) / "template.md"
+            template.write_text("template\n")
+            created = adapter.create_task_document("folder-1", "Task", template)
+            adapter.append_task_document(created["document_id"], "appendix\n")
+            self.assertEqual(created["backend"], "hermes-api")
+            self.assertEqual(drive.files_api.created["body"]["parents"], ["folder-1"])
+            self.assertEqual(adapter.read_task_document(created["document_id"]), "template\nappendix\n")
 
 
 if __name__ == "__main__":

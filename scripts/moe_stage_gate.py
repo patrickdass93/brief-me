@@ -312,8 +312,8 @@ def apply_google_cli_config(config: dict[str, Any]) -> str:
     the package or changing the host-wide default.
     """
     backend = str(config.get("google_cli", "auto")).lower()
-    if backend not in {"auto", "gog", "gws"}:
-        raise ValueError("google_cli must be one of auto, gog, or gws")
+    if backend not in {"auto", "gog", "gws", "hermes-api"}:
+        raise ValueError("google_cli must be one of auto, gog, gws, or hermes-api")
     if backend == "auto":
         os.environ.pop("BRIEF_ME_GOOGLE_CLI", None)
     else:
