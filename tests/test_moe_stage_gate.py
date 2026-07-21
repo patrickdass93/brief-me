@@ -218,7 +218,7 @@ class StageGateTests(unittest.TestCase):
             def documents(self): return self.documents_api
 
         drive, docs = Drive(), Docs()
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(adapter.os.environ, {"BRIEF_ME_GOOGLE_CLI": "hermes-api"}), patch.object(adapter, "_hermes_api_services", return_value=(drive, docs)):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(adapter.os.environ, {"BRIEF_ME_GOOGLE_CLI": "hermes-api"}), patch.object(adapter, "_hermes_api_script_path", return_value=Path("/fixture/google_api.py")), patch.object(adapter, "_hermes_api_services", return_value=(drive, docs)):
             template = Path(tmp) / "template.md"
             template.write_text("template\n")
             created = adapter.create_task_document("folder-1", "Task", template)
@@ -226,6 +226,11 @@ class StageGateTests(unittest.TestCase):
             self.assertEqual(created["backend"], "hermes-api")
             self.assertEqual(drive.files_api.created["body"]["parents"], ["folder-1"])
             self.assertEqual(adapter.read_task_document(created["document_id"]), "template\nappendix\n")
+
+    def test_explicit_hermes_api_requires_the_target_google_helper(self) -> None:
+        with patch.dict(adapter.os.environ, {"BRIEF_ME_GOOGLE_CLI": "hermes-api"}), patch.object(adapter, "_hermes_api_script_path", side_effect=adapter.GoogleDocsError("unavailable")):
+            with self.assertRaisesRegex(adapter.GoogleDocsError, "unavailable"):
+                adapter.google_backend()
 
 
 if __name__ == "__main__":

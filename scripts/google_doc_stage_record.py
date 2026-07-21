@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -16,17 +18,34 @@ class GoogleDocsError(RuntimeError):
     """Raised when the selected Google Workspace CLI cannot operate on a task Doc."""
 
 
-def _hermes_api_services() -> tuple[Any, Any]:
-    """Load the target Hermes profile's Google API helper without copying OAuth."""
+def _hermes_api_script_path() -> Path:
+    """Return the target profile's Google API helper without reading credentials."""
     hermes_home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
-    scripts_dir = hermes_home / "skills" / "productivity" / "google-workspace" / "scripts"
-    if not scripts_dir.is_dir():
+    script_path = hermes_home / "skills" / "productivity" / "google-workspace" / "scripts" / "google_api.py"
+    if not script_path.is_file():
         raise GoogleDocsError("Hermes Google Workspace skill is unavailable for hermes-api backend")
-    scripts_dir_text = str(scripts_dir)
-    if scripts_dir_text not in sys.path:
-        sys.path.insert(0, scripts_dir_text)
+    return script_path
+
+
+@lru_cache(maxsize=1)
+def _hermes_api_services() -> tuple[Any, Any]:
+    """Load and reuse target-owned Google API clients without copying OAuth."""
+    script_path = _hermes_api_script_path()
     try:
-        from google_api import build_service
+        # The Hermes helper imports a sibling module when run standalone. Make
+        # that sibling visible only during import, then restore this process's
+        # import search order before doing any document work.
+        original_sys_path = sys.path.copy()
+        sys.path.insert(0, str(script_path.parent))
+        try:
+            spec = importlib.util.spec_from_file_location("brief_me_hermes_google_api", script_path)
+            if not spec or not spec.loader:
+                raise ImportError("could not create a module spec")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        finally:
+            sys.path[:] = original_sys_path
+        build_service = module.build_service
         return build_service("drive", "v3"), build_service("docs", "v1")
     except Exception as exc:
         raise GoogleDocsError(f"Hermes Google API backend is unavailable: {type(exc).__name__}") from exc
@@ -40,13 +59,16 @@ def google_backend() -> str:
             raise GoogleDocsError(f"configured Google CLI is unavailable: {configured}")
         return configured
     if configured == "hermes-api":
+        _hermes_api_script_path()
         return configured
     for candidate in ("gog", "gws"):
         if shutil.which(candidate):
             return candidate
-    hermes_home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
-    if (hermes_home / "skills" / "productivity" / "google-workspace" / "scripts" / "google_api.py").is_file():
+    try:
+        _hermes_api_script_path()
         return "hermes-api"
+    except GoogleDocsError:
+        pass
     raise GoogleDocsError("no usable Google backend: install/authenticate gog, gws, or the Hermes Google Workspace skill")
 
 
@@ -80,7 +102,7 @@ def create_task_document(folder_id: str, title: str, template_path: Path) -> dic
         if isinstance(document_id, str) and document_id:
             _run(["gws", "drive", "files", "update", "--params", json.dumps({"fileId": document_id, "addParents": folder_id}), "--json", "{}"])
             append_task_document(document_id, template_path.read_text(encoding="utf-8"))
-    else:
+    elif backend == "hermes-api":
         drive, docs = _hermes_api_services()
         data = drive.files().create(
             body={"name": title, "mimeType": "application/vnd.google-apps.document", "parents": [folder_id]},
@@ -92,6 +114,8 @@ def create_task_document(folder_id: str, title: str, template_path: Path) -> dic
                 documentId=document_id,
                 body={"requests": [{"insertText": {"location": {"index": 1}, "text": template_path.read_text(encoding="utf-8")}}]},
             ).execute()
+    else:
+        raise GoogleDocsError(f"unsupported Google backend: {backend}")
     if not isinstance(document_id, str) or not document_id:
         raise GoogleDocsError(f"{backend} document creation did not return a document ID")
     return {"document_id": document_id, "raw": data, "backend": backend}
@@ -122,13 +146,13 @@ def append_task_document(document_id: str, markdown: str) -> None:
         path.unlink(missing_ok=True)
 
 
-def _gws_text(value: Any) -> str:
+def _docs_text(value: Any) -> str:
     if isinstance(value, dict):
         if isinstance(value.get("textRun"), dict) and isinstance(value["textRun"].get("content"), str):
             return value["textRun"]["content"]
-        return "".join(_gws_text(item) for item in value.values())
+        return "".join(_docs_text(item) for item in value.values())
     if isinstance(value, list):
-        return "".join(_gws_text(item) for item in value)
+        return "".join(_docs_text(item) for item in value)
     return ""
 
 
@@ -138,9 +162,9 @@ def read_task_document(document_id: str) -> str:
         return _run(["gog", "docs", "cat", document_id, "--plain", "--no-input"])
     if google_backend() == "hermes-api":
         _, docs = _hermes_api_services()
-        return _gws_text(docs.documents().get(documentId=document_id).execute().get("body", {}))
+        return _docs_text(docs.documents().get(documentId=document_id).execute().get("body", {}))
     data = _json(["gws", "docs", "documents", "get", "--params", json.dumps({"documentId": document_id})], "gws docs documents get")
-    return _gws_text(data.get("body", {}))
+    return _docs_text(data.get("body", {}))
 
 
 def document_url(document_id: str) -> str:
