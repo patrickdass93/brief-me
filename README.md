@@ -77,6 +77,31 @@ The gate runtime requires Python 3, [`jsonschema`](requirements.txt), and config
 
 Use `scripts/moe_stage_gate.py --help` for invocation details. The script validates the record locally, runs both evaluator calls in parallel, then appends the independent reports and canonical machine record to the task Doc. The runtime is invoked from the package checkout by default (`$HOME/brief-me`); set `BRIEF_ME_PACKAGE_ROOT` when the checkout is elsewhere. Never commit Drive IDs, task docs, raw evaluator prompts, or unredacted evidence.
 
+## Runtime bundle and read-only fleet audit
+
+The same repository can stage the runtime alongside the four-skill package, while keeping target routes in a private config outside the repository. This is **not** an activation command:
+
+```bash
+python3 scripts/deploy_package_install.py \
+  --config ~/.hermes/brief_me_package_targets.json \
+  --dry-run --json
+```
+
+A later non-dry-run installation backs up the target’s existing skill directories and `runtime/task-runtime/` directory before staging:
+
+```text
+<profile-root>/runtime/task-runtime/task_runtime.py
+```
+
+Before any install, use the read-only auditor. It reads only versions, hashes, file-presence flags, and path accessibility; it never opens private configuration contents or writes to a target:
+
+```bash
+python3 scripts/audit_runtime_readiness.py \
+  --config ~/.hermes/brief_me_package_targets.json
+```
+
+The auditor distinguishes `ready_for_inactive_install`, `drift`, and `blocked`. A package-skill hash match is not a claim that a live runtime, target-owned integrations, model providers, or scheduled activation are ready.
+
 ## Local inactive Task Runtime proof
 
 `scripts/task_runtime.py` is a standard-library-only, local proof of the durable execution contract. It does **not** invoke Hermes tools, models, networks, crons, messaging, or remote agents. It stores synthetic task state and append-only transition events in SQLite, prevents duplicate triggers using `(agent_id, idempotency_key)`, supports approval waits, records parent-child task lineage, and can import a legacy JSON ledger without changing the source file.

@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""Deploy the four-skill brief-me package from a local repo to configured targets.
+"""Deploy the brief-me skill package plus its local Task Runtime to configured targets.
 
-This helper is intentionally generic and public-safe: it has no hard-coded hosts,
-credentials, or profile paths. Pass a private JSON config outside the repository:
-
-    scripts/deploy_package_install.py --config ~/.hermes/brief_me_package_targets.json
-
-Each deployment creates a timestamped backup under the target profile root before
-replacing only `skills/productivity/{brief-me,build-me,ship-me,maintain-me}`.
+The tool is generic and public-safe: target routes live only in a private JSON
+configuration outside the repository. `--dry-run` never writes a target.
 """
 from __future__ import annotations
 
 import argparse
 import io
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -24,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 SKILLS = ["brief-me", "build-me", "ship-me", "maintain-me"]
+RUNTIME_ARCHIVE_PATH = "runtime/task_runtime.py"
+RUNTIME_INSTALL_DIR = Path("runtime") / "task-runtime"
 
 
 def load_targets(config_path: str) -> list[dict[str, Any]]:
@@ -42,38 +38,58 @@ def source_root(repo_root: Path) -> Path:
     return root
 
 
-def archive_bytes(source: Path) -> bytes:
+def runtime_source(repo_root: Path) -> Path:
+    path = repo_root / "scripts" / "task_runtime.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"missing runtime source: {path}")
+    return path
+
+
+def archive_bytes(source: Path, runtime: Path | None = None) -> bytes:
+    runtime = runtime or source.parents[1] / "scripts" / "task_runtime.py"
+    if not runtime.is_file():
+        raise FileNotFoundError(f"missing runtime source: {runtime}")
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w") as archive:
         for name in SKILLS:
             archive.add(source / name, arcname=name)
+        archive.add(runtime, arcname=RUNTIME_ARCHIVE_PATH)
     return stream.getvalue()
 
 
-def backup_name() -> str:
-    return f"brief-me-package-{time.strftime('%Y%m%d-%H%M%S')}"
+def backup_name(prefix: str) -> str:
+    return f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}"
 
 
 def expand_local(path_text: str) -> Path:
     return Path(path_text).expanduser()
 
 
-def deploy_local(target: dict[str, Any], source: Path, dry_run: bool) -> dict[str, Any]:
+def deploy_local(target: dict[str, Any], source: Path, runtime: Path, dry_run: bool) -> dict[str, Any]:
     agent = str(target.get("agent", "local"))
     root = expand_local(str(target.get("profile_root", "~/.hermes")))
-    destination = root / "skills" / "productivity"
-    backup = root / "backups" / backup_name()
+    skills_destination = root / "skills" / "productivity"
+    runtime_destination = root / RUNTIME_INSTALL_DIR
     if dry_run:
-        return {"agent": agent, "ok": True, "dry_run": True, "installed": len(SKILLS)}
-    destination.mkdir(parents=True, exist_ok=True)
-    backup.mkdir(parents=True, exist_ok=False)
+        return {"agent": agent, "ok": True, "dry_run": True, "skills_installed": len(SKILLS), "runtime_installed": True}
+
+    skills_backup = root / "backups" / backup_name("brief-me-package")
+    runtime_backup = root / "backups" / backup_name("brief-me-runtime")
+    skills_destination.mkdir(parents=True, exist_ok=True)
+    skills_backup.mkdir(parents=True, exist_ok=False)
+    runtime_backup.mkdir(parents=True, exist_ok=False)
     for name in SKILLS:
-        existing = destination / name
+        existing = skills_destination / name
         if existing.exists():
-            shutil.copytree(existing, backup / name, symlinks=True)
+            shutil.copytree(existing, skills_backup / name, symlinks=True)
         shutil.rmtree(existing, ignore_errors=True)
         shutil.copytree(source / name, existing, symlinks=True)
-    return {"agent": agent, "ok": True, "installed": len(SKILLS), "backup_created": True}
+    if runtime_destination.exists():
+        shutil.copytree(runtime_destination, runtime_backup / "task-runtime", symlinks=True)
+    shutil.rmtree(runtime_destination, ignore_errors=True)
+    runtime_destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(runtime, runtime_destination / "task_runtime.py")
+    return {"agent": agent, "ok": True, "skills_installed": len(SKILLS), "runtime_installed": True, "backup_created": True}
 
 
 def remote_root_expr(profile_root: str) -> str:
@@ -87,20 +103,23 @@ def remote_root_expr(profile_root: str) -> str:
 def remote_install_command(profile_root: str, stamp: str) -> str:
     root = remote_root_expr(profile_root)
     skills = " ".join(SKILLS)
-    # Keep this POSIX script semicolon-safe so the WSL transport can pass it as a
-    # single `sh -lc` argument without changing loop/conditional grammar.
     return (
-        f'set -eu; ROOT="{root}"; DEST="$ROOT/skills/productivity"; '
-        f'BACKUP="$ROOT/backups/brief-me-package-{stamp}"; '
+        f'set -eu; ROOT="{root}"; DEST="$ROOT/skills/productivity"; RUNTIME_DEST="$ROOT/{RUNTIME_INSTALL_DIR}"; '
+        f'SKILLS_BACKUP="$ROOT/backups/brief-me-package-{stamp}"; RUNTIME_BACKUP="$ROOT/backups/brief-me-runtime-{stamp}"; '
         f'STAGE="$ROOT/.brief-me-package-stage-{stamp}-$$"; '
         'cleanup() { rm -rf "$STAGE"; }; trap cleanup EXIT; '
-        'mkdir -p "$DEST" "$BACKUP" "$STAGE"; tar -xf - -C "$STAGE"; '
+        'mkdir -p "$DEST" "$SKILLS_BACKUP" "$RUNTIME_BACKUP" "$STAGE"; tar -xf - -C "$STAGE"; '
+        'test -f "$STAGE/runtime/task_runtime.py"; '
         f'for NAME in {skills}; do '
         'test -f "$STAGE/$NAME/SKILL.md"; '
-        'if test -e "$DEST/$NAME"; then cp -a "$DEST/$NAME" "$BACKUP/$NAME"; fi; '
+        'if test -e "$DEST/$NAME"; then cp -a "$DEST/$NAME" "$SKILLS_BACKUP/$NAME"; fi; '
         'rm -rf "$DEST/$NAME"; mv "$STAGE/$NAME" "$DEST/$NAME"; '
-        f'done; printf "installed=%s backup_created=true\\n" "{len(SKILLS)}"'
+        'done; '
+        'if test -e "$RUNTIME_DEST"; then cp -a "$RUNTIME_DEST" "$RUNTIME_BACKUP/task-runtime"; fi; '
+        'rm -rf "$RUNTIME_DEST"; mkdir -p "$RUNTIME_DEST"; cp "$STAGE/runtime/task_runtime.py" "$RUNTIME_DEST/task_runtime.py"; '
+        f'printf "skills_installed=%s runtime_installed=true backup_created=true\\n" "{len(SKILLS)}"'
     )
+
 
 def deploy_ssh(target: dict[str, Any], archive: bytes, timeout: int, dry_run: bool) -> dict[str, Any]:
     agent = str(target.get("agent", "remote"))
@@ -108,57 +127,36 @@ def deploy_ssh(target: dict[str, Any], archive: bytes, timeout: int, dry_run: bo
     profile_root = str(target.get("profile_root") or "~/.hermes")
     mode = str(target.get("mode") or "posix")
     if dry_run:
-        return {"agent": agent, "ok": True, "dry_run": True, "installed": len(SKILLS)}
-
+        return {"agent": agent, "ok": True, "dry_run": True, "skills_installed": len(SKILLS), "runtime_installed": True}
     command = remote_install_command(profile_root, time.strftime("%Y%m%d-%H%M%S"))
     if mode == "wsl":
-        # Windows OpenSSH invokes the remote command through an outer shell before
-        # `wsl.exe` starts its own POSIX shell. Use one double-quoted argument and
-        # escape it for the outer shell; nested shlex single quotes break on this hop.
         one_line = command.replace("\n", "; ")
-        escaped = (
-            one_line.replace("\\", "\\\\")
-            .replace('"', '\\"')
-            .replace("$", "\\$")
-            .replace("`", "\\`")
-        )
+        escaped = one_line.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
         remote_command = f'wsl.exe sh -lc "{escaped}"'
     elif mode == "posix":
         remote_command = command
     else:
         return {"agent": agent, "ok": False, "error": f"unsupported target mode: {mode}"}
-
+    ssh_args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
+    if target.get("ssh_port"):
+        ssh_args.extend(["-p", str(target["ssh_port"])])
     proc = subprocess.run(
-        [
-            "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            "-o",
-            "ConnectTimeout=10",
-            ssh_target,
-            remote_command,
-        ],
+        ssh_args + [ssh_target, remote_command],
         input=archive,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,
     )
     if proc.returncode != 0:
-        return {
-            "agent": agent,
-            "ok": False,
-            "error": (proc.stderr or proc.stdout).decode(errors="replace")[-400:] or f"ssh exit {proc.returncode}",
-        }
-    return {"agent": agent, "ok": True, "installed": len(SKILLS), "backup_created": True}
+        return {"agent": agent, "ok": False, "error": (proc.stderr or proc.stdout).decode(errors="replace")[-400:] or f"ssh exit {proc.returncode}"}
+    return {"agent": agent, "ok": True, "skills_installed": len(SKILLS), "runtime_installed": True, "backup_created": True}
 
 
-def deploy_target(target: dict[str, Any], source: Path, archive: bytes, timeout: int, dry_run: bool) -> dict[str, Any]:
-    kind = str(target.get("type", "local"))
+def deploy_target(target: dict[str, Any], source: Path, runtime: Path, archive: bytes, timeout: int, dry_run: bool) -> dict[str, Any]:
     try:
+        kind = str(target.get("type", "local"))
         if kind == "local":
-            return deploy_local(target, source, dry_run)
+            return deploy_local(target, source, runtime, dry_run)
         if kind == "ssh":
             return deploy_ssh(target, archive, timeout, dry_run)
         return {"agent": str(target.get("agent", "unknown")), "ok": False, "error": f"unsupported target type: {kind}"}
@@ -175,28 +173,18 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-
     repo = Path(args.repo_root).expanduser()
-    source = source_root(repo)
+    source, runtime = source_root(repo), runtime_source(repo)
     targets = load_targets(args.config)
     if args.agent:
         wanted = set(args.agent)
         targets = [target for target in targets if str(target.get("agent")) in wanted]
         if not targets:
             parser.error("no configured targets matched --agent")
-    bundle = archive_bytes(source)
-    results = [deploy_target(target, source, bundle, args.timeout, args.dry_run) for target in targets]
-    output = {
-        "repo_root": str(repo),
-        "target_count": len(results),
-        "all_ok": all(bool(item.get("ok")) for item in results),
-        "results": results,
-    }
-    if args.json:
-        print(json.dumps(output, ensure_ascii=False, indent=2))
-    else:
-        for item in results:
-            print(f"{item['agent']}: {'OK' if item['ok'] else 'ERROR'}")
+    bundle = archive_bytes(source, runtime)
+    results = [deploy_target(target, source, runtime, bundle, args.timeout, args.dry_run) for target in targets]
+    output = {"repo_root": str(repo), "target_count": len(results), "all_ok": all(bool(item.get("ok")) for item in results), "results": results}
+    print(json.dumps(output, ensure_ascii=False, indent=2) if args.json else "\n".join(f"{item['agent']}: {'OK' if item['ok'] else 'ERROR'}" for item in results))
     return 0 if output["all_ok"] else 2
 
 
