@@ -51,7 +51,7 @@
 
 **Step 1:** Implement the smallest code needed for the failing tests.
 
-**Step 2:** Run `python3 -m unittest tests.test_task_runtime -v`.
+**Step 2:** Run `python3 tests/test_task_runtime.py`.
 
 **Expected result:** all focused tests PASS.
 
