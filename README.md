@@ -118,6 +118,12 @@ A later non-dry-run installation backs up the target’s existing skill director
 <profile-root>/runtime/task-runtime/task_runtime.py
 ```
 
+### Per-target transactional boundary
+
+An installer invocation is **transactional only within one target profile**: it stages the package, takes that target’s backups, applies the four skills and runtime, and attempts compensation from those backups if its apply fails. The structured result distinguishes a successful apply from a rollback attempt, a confirmed rollback, and an unknown/unconfirmed rollback state. Treat missing, malformed, or transport-interrupted rollback evidence as a failed, manually inspectable target state—not as restored.
+
+A multi-target command is an ordered collection of independent target transactions. It provides **no batch/global atomicity**: a failure on one target does not undo a previously successful target, and independent later target attempts are not automatically cancelled. Review each target’s result and exact backup/manifest paths before any follow-up; use `--agent` to constrain an invocation to one approved target. A target installation remains inactive; source pull, installation, and activation are separate gated actions.
+
 Before any install, use the read-only auditor. It reads only versions, hashes, file-presence flags, and path accessibility; it never opens private configuration contents or writes to a target:
 
 ```bash

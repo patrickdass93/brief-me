@@ -180,21 +180,21 @@ def remote_install_command(profile_root: str, stamp: str) -> str:
     return (
         f'set -u; ROOT="{root}"; DEST="$ROOT/skills/productivity"; RUNTIME_DEST="$ROOT/{RUNTIME_INSTALL_DIR}"; '
         f'SKILLS_BACKUP="$ROOT/backups/brief-me-package-{stamp}"; RUNTIME_BACKUP="$ROOT/backups/brief-me-runtime-{stamp}"; '
-        f'MANIFEST="$ROOT/backups/brief-me-preinstall-{stamp}.json"; STAGE="$ROOT/.brief-me-package-stage-{stamp}-$$"; CHANGED=0; '
+        f'MANIFEST="$ROOT/backups/brief-me-preinstall-{stamp}.json"; STAGE="$ROOT/.brief-me-package-stage-{stamp}-$$"; CHANGED=0; APPLY_SUCCEEDED=false; ROLLBACK_ATTEMPTED=false; ROLLBACK_SUCCEEDED=false; ROLLED_BACK=false; '
         'cleanup() { rm -rf "$STAGE"; }; '
-        'rollback() { rc="$1"; if test "$CHANGED" = 1; then '
-        f'for NAME in {skills}; do rm -rf "$DEST/$NAME" || true; test -e "$SKILLS_BACKUP/$NAME" && cp -a "$SKILLS_BACKUP/$NAME" "$DEST/$NAME" || true; done; '
-        'rm -rf "$RUNTIME_DEST" || true; test -e "$RUNTIME_BACKUP/task-runtime" && cp -a "$RUNTIME_BACKUP/task-runtime" "$RUNTIME_DEST" || true; fi; cleanup; exit "$rc"; }; '
+        'emit_result() { printf "{\\\"apply_succeeded\\\":%s,\\\"rollback_attempted\\\":%s,\\\"rollback_succeeded\\\":%s,\\\"rolled_back\\\":%s,\\\"skills_backup\\\":\\\"%s\\\",\\\"runtime_backup\\\":\\\"%s\\\",\\\"preinstall_manifest\\\":\\\"%s\\\",\\\"skills_installed\\\":4,\\\"runtime_installed\\\":true,\\\"backup_created\\\":true}\\n" "$APPLY_SUCCEEDED" "$ROLLBACK_ATTEMPTED" "$ROLLBACK_SUCCEEDED" "$ROLLED_BACK" "$SKILLS_BACKUP" "$RUNTIME_BACKUP" "$MANIFEST"; }; '
+        'rollback() { rc="$1"; ROLLBACK_ATTEMPTED=true; ROLLBACK_SUCCEEDED=true; if test "$CHANGED" = 1; then '
+        f'for NAME in {skills}; do rm -rf "$DEST/$NAME" || ROLLBACK_SUCCEEDED=false; if test -e "$SKILLS_BACKUP/$NAME"; then cp -a "$SKILLS_BACKUP/$NAME" "$DEST/$NAME" || ROLLBACK_SUCCEEDED=false; fi; done; '
+        'rm -rf "$RUNTIME_DEST" || ROLLBACK_SUCCEEDED=false; if test -e "$RUNTIME_BACKUP/task-runtime"; then cp -a "$RUNTIME_BACKUP/task-runtime" "$RUNTIME_DEST" || ROLLBACK_SUCCEEDED=false; fi; if test "$ROLLBACK_SUCCEEDED" = true; then ROLLED_BACK=true; fi; fi; cleanup; emit_result; exit "$rc"; }; '
         'apply() { '
         'mkdir -p "$DEST" "$SKILLS_BACKUP" "$RUNTIME_BACKUP" "$STAGE" || return 1; '
         f'{manifest_program} "$ROOT" "$MANIFEST" || return 1; '
         'tar -xf - -C "$STAGE" || return 1; test -f "$STAGE/runtime/task_runtime.py" || return 1; '
-        f'for NAME in {skills}; do test -f "$STAGE/$NAME/SKILL.md" || return 1; test -e "$DEST/$NAME" && cp -a "$DEST/$NAME" "$SKILLS_BACKUP/$NAME" || true; done; '
-        'test -e "$RUNTIME_DEST" && cp -a "$RUNTIME_DEST" "$RUNTIME_BACKUP/task-runtime" || true; CHANGED=1; '
+        f'for NAME in {skills}; do test -f "$STAGE/$NAME/SKILL.md" || return 1; if test -e "$DEST/$NAME"; then cp -a "$DEST/$NAME" "$SKILLS_BACKUP/$NAME" || return 1; fi; done; '
+        'if test -e "$RUNTIME_DEST"; then cp -a "$RUNTIME_DEST" "$RUNTIME_BACKUP/task-runtime" || return 1; fi; CHANGED=1; '
         f'for NAME in {skills}; do rm -rf "$DEST/$NAME" || return 1; mv "$STAGE/$NAME" "$DEST/$NAME" || return 1; done; '
         'rm -rf "$RUNTIME_DEST" || return 1; mkdir -p "$RUNTIME_DEST" || return 1; cp "$STAGE/runtime/task_runtime.py" "$RUNTIME_DEST/task_runtime.py" || return 1; }; '
-        'if ! apply; then rollback 1; fi; cleanup; '
-        'printf "{\\\"skills_backup\\\":\\\"%s\\\",\\\"runtime_backup\\\":\\\"%s\\\",\\\"preinstall_manifest\\\":\\\"%s\\\",\\\"skills_installed\\\":4,\\\"runtime_installed\\\":true,\\\"backup_created\\\":true,\\\"rolled_back\\\":false}\\n" "$SKILLS_BACKUP" "$RUNTIME_BACKUP" "$MANIFEST"'
+        'if apply; then APPLY_SUCCEEDED=true; cleanup; emit_result; exit 0; else rollback 1; fi; '
     )
 
 
@@ -216,15 +216,53 @@ def deploy_ssh(target: dict[str, Any], archive: bytes, timeout: int, dry_run: bo
     ssh_args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
     if target.get("ssh_port"):
         ssh_args.extend(["-p", str(target["ssh_port"])])
-    proc = subprocess.run(ssh_args + [ssh_target, remote_command], input=archive, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-    if proc.returncode != 0:
-        return {"agent": agent, "ok": False, "rolled_back": True, "error": (proc.stderr or proc.stdout).decode(errors="replace")[-500:] or f"ssh exit {proc.returncode}"}
+    unknown_rollback = {
+        "apply_succeeded": False,
+        "rollback_attempted": "unknown",
+        "rollback_succeeded": "unknown",
+        "rolled_back": False,
+    }
+    try:
+        proc = subprocess.run(ssh_args + [ssh_target, remote_command], input=archive, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {
+            "agent": agent,
+            "ok": False,
+            **unknown_rollback,
+            "error": "remote installer timed out without parseable rollback evidence",
+        }
     text = proc.stdout.decode(errors="replace").strip().splitlines()
     try:
         payload = json.loads(text[-1])
     except (IndexError, json.JSONDecodeError):
-        return {"agent": agent, "ok": False, "error": "remote installer returned no parseable rollback evidence"}
-    return {"agent": agent, "ok": True, **payload}
+        return {
+            "agent": agent,
+            "ok": False,
+            **unknown_rollback,
+            "error": "remote installer returned no parseable rollback evidence",
+        }
+    required = {"apply_succeeded", "rollback_attempted", "rollback_succeeded", "rolled_back"}
+    if (
+        not isinstance(payload, dict)
+        or not required.issubset(payload)
+        or any(type(payload[field]) is not bool for field in required)
+    ):
+        return {
+            "agent": agent,
+            "ok": False,
+            **unknown_rollback,
+            "error": "remote installer returned incomplete rollback evidence",
+        }
+    if proc.returncode != 0:
+        return {
+            "agent": agent,
+            **payload,
+            "ok": False,
+            "error": (proc.stderr or proc.stdout).decode(errors="replace")[-500:] or f"ssh exit {proc.returncode}",
+        }
+    if payload["apply_succeeded"] is not True:
+        return {"agent": agent, **payload, "ok": False, "error": "remote installer reported failed apply"}
+    return {"agent": agent, **payload, "ok": True}
 
 
 def deploy_target(target: dict[str, Any], source: Path, runtime: Path, archive: bytes, timeout: int, dry_run: bool) -> dict[str, Any]:

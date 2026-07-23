@@ -35,18 +35,37 @@ def verify_manifest(checkout: Path, ref: str) -> dict[str, Any]:
     path = checkout / "release-manifest.json"
     if not path.is_file():
         raise PullError("release-manifest.json is missing")
+
+    # Bind manifest to the committed Git tree: the file must match its tracked blob.
+    manifest_blob = run(["git", "hash-object", str(path)], checkout)
+    tree_entry = run(["git", "ls-tree", "HEAD", "release-manifest.json"], checkout)
+    if manifest_blob not in tree_entry:
+        raise PullError("release-manifest.json does not match the committed Git tree blob")
+
     data = json.loads(path.read_text())
     if data.get("schema_version") != 1:
         raise PullError("unsupported release manifest schema")
     if data.get("version") != ref:
         raise PullError("release manifest version does not match requested ref")
+
     files = data.get("files")
     if not isinstance(files, dict) or not files:
         raise PullError("release manifest has no file hashes")
+
+    # Verify every listed file matches its manifest hash.
     for relative, expected in files.items():
         candidate = checkout / relative
         if not candidate.is_file() or sha256(candidate) != expected:
             raise PullError(f"release manifest hash mismatch for {relative}")
+
+    # Allow-list: every tracked regular file (except the manifest itself) must be listed.
+    tracked = run(["git", "ls-files"], checkout).splitlines()
+    for relative in tracked:
+        if relative == "release-manifest.json":
+            continue
+        if relative not in files:
+            raise PullError(f"tracked file {relative} is not listed in the release manifest allow-list")
+
     return {"version": data["version"], "file_count": len(files)}
 
 
